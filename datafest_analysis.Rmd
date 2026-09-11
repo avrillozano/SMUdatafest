@@ -1,0 +1,132 @@
+---
+title: "datafest analysis"
+output: html_document
+date: "2026-03-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+
+# Load required packages
+library(tidyverse)
+
+# Read datasets (using relative paths for GitHub portability)
+encounters=read.csv("encounters.csv")
+diagnosis=read.csv("diagnosis.csv")
+patients=read.csv("patients.csv")
+social_determinants=read.csv("social_determinants.csv")
+departments=read.csv("departments.csv")
+tigercensuscodes=read.csv("tigercensuscodes.csv")
+```
+
+## Join datasets to create a big one with encounters, diagnosis and patients. Also creates the variable EverDiagnosed, which is 1 if a patient was, throughout their journey, diagnosed with a mental illness or disorder.
+
+```{r}
+#unique primary diagnosis key
+diagnosis_unique = diagnosis %>%
+  distinct(DiagnosisKey, .keep_all = TRUE)
+
+encounter_diagnosis = left_join(
+  encounters,
+  diagnosis_unique,
+  by = c("PrimaryDiagnosisKey" = "DiagnosisKey")
+)
+encounter_diagnosis_patients=left_join(encounter_diagnosis,patients,by=c("PatientDurableKey"="DurableKey"))
+
+encounter_diagnosis_patients <- encounter_diagnosis_patients %>% 
+  mutate(MentalDisorder = ifelse(str_starts(DiagnosisValue, "F") & !str_starts(DiagnosisValue, "F7") | str_starts(DiagnosisValue, "R45"),1,0))
+
+encounter_diagnosis_patients <- encounter_diagnosis_patients %>%
+  group_by(PatientDurableKey) %>%
+  mutate(
+    EverDiagnosed = if_else(any(MentalDisorder == 1, na.rm = TRUE), 1, 0)
+  ) %>%
+  ungroup()
+
+encounter_diagnosis_patients <- encounter_diagnosis_patients %>%
+  group_by(PatientDurableKey) %>%
+  summarize(
+    # Returns TRUE if any encounter for this patient was a 1
+    EverDiagnosed = any(MentalDisorder == 1, na.rm = TRUE)
+  ) %>%
+  mutate(EverDiagnosed = as.numeric(EverDiagnosed))
+
+```
+
+Creates a histogram describing hospitalizations, grouped by patients who have ever received a mental illness diagnosis versus those who haven't.
+
+```{r}
+no_mental=filter(encounter_diagnosis_patients,encounter_diagnosis_patients$EverDiagnosed==0)
+yes_mental=filter(encounter_diagnosis_patients,encounter_diagnosis_patients$EverDiagnosed==1)
+no_mental=data.frame(DurableKey=table(no_mental$PatientDurableKey))
+yes_mental=data.frame(DurableKey=table(yes_mental$PatientDurableKey))
+
+combined <- bind_rows(
+  yes_mental %>% mutate(Group = "Mental illness"),
+  no_mental %>% mutate(Group = "No mental illness")
+)
+ggplot(combined, aes(x = DurableKey.Freq, fill = Group)) +
+  geom_histogram(aes(y = after_stat(density)), 
+                 alpha = 0.5, position = "identity") +
+  xlim(0, 175) +
+  labs(title = "Frequency of visits by patients",
+       x = "Frequency",
+       y = "Proportion") 
+```
+
+Creates a histogram displaying the MyChart inactivation rate  by birth year. *No significant results.*
+
+```{r}
+# encounter_diagnosis_patients <- encounter_diagnosis_patients %>%
+#   mutate(activated_flag = if_else(MyChartStatus == "Activated", 1, 0))
+# 
+# ggplot(encounter_diagnosis_patients, 
+#        aes(x = PatientBirthYearBin, y = activated_flag)) +
+#   stat_summary(fun = mean, geom = "col", fill = "cadetblue") +
+#   labs(title = "MyChart inactivation rate by birth year",
+#        x = "Birth Year",
+#        y = "Proportion inactivated") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   scale_x_continuous(breaks = seq(1920, 2025, 10)) + xlim(1900,2025)
+```
+Creates a line graph displaying repeat hospitalizations in patients diagnosed with mental disorders. *No significant results.*
+
+```{r}
+# encounter_diagnosis_patients <- encounter_diagnosis_patients %>%
+#   mutate(Date=mdy(Date))
+# patient_counts=as.data.frame(table(addiction_hospital$PatientDurableKey))
+# freq_df <- patient_counts %>%
+#   count(Freq)
+# ggplot(freq_df, aes(x = Freq, y = n)) +
+#   geom_line(color = "cadetblue") +
+#   geom_point(color = "cadetblue") +
+#   labs(title = "Repeat Hospitalizations Distribution in Patients with Diagnosed Mental Disorders",
+#        x = "Number of Hospitalizations",
+#        y = "Number of Patients")
+```
+
+Creates a graph displaying distribution of all races in dataset. *No use as of yet*
+
+```{r}
+# patient_stats <- encounter_diagnosis_patients %>%
+#   distinct(PatientDurableKey, FirstRace, EverDiagnosed)
+# race_prevalence <- patient_stats %>%
+#   group_by(FirstRace) %>%
+#   summarize(
+#     Total_Patients = n(),
+#     Diagnosed_Count = sum(EverDiagnosed),
+#     Prevalence_Pct = mean(EverDiagnosed) * 100
+#   ) %>%
+#   arrange(desc(Prevalence_Pct))
+# race_prevalence=race_prevalence%>%slice(-c(7,8,10,11))
+# ggplot(race_prevalence, aes(x = reorder(FirstRace, Prevalence_Pct), y = Prevalence_Pct)) +
+#   geom_col(fill = "orchid4") +
+#   coord_flip() +
+#   labs(title = "Prevalence of Mental Illness by Race",
+#        x = "Race",
+#        y = "Prevalence")
+
+```
+
+
