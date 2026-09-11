@@ -7,11 +7,8 @@ date: "2026-03-28"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 options(scipen=999)
-
-# Load required packages
+setwd("C:/Users/avril/Downloads/2026-ASA-DataFest-Data-Files/2026-ASA-DataFest-Data-Files")
 library(tidyverse)
-
-# Read datasets (using relative paths for GitHub portability)
 encounters=read.csv("encounters.csv")
 diagnosis=read.csv("diagnosis.csv")
 patients=read.csv("patients.csv")
@@ -20,8 +17,7 @@ departments=read.csv("departments.csv")
 tigercensuscodes=read.csv("tigercensuscodes.csv")
 ```
 
-## Join datasets to create a big one with encounters, diagnosis and patients. Also creates the variable EverDiagnosed, which is 1 if a patient was, throughout their journey, diagnosed with a mental illness or disorder.
-
+Join datasets to create a big one with `encounters`, `diagnosis` and `patients`. Also creates the variable `EverDiagnosed`, which is 1 if a patient was, throughout their journey, diagnosed with a mental illness or disorder.
 ```{r}
 #unique primary diagnosis key
 diagnosis_unique = diagnosis %>%
@@ -51,11 +47,269 @@ encounter_diagnosis_patients <- encounter_diagnosis_patients %>%
     EverDiagnosed = any(MentalDisorder == 1, na.rm = TRUE)
   ) %>%
   mutate(EverDiagnosed = as.numeric(EverDiagnosed))
+```
+-------------------------------------------------------------------------------
+# STATISTICAL ANALYSIS: CHI-SQUARE HYPOTHESIS TESTING
+MyChart activity sample plots and Chi-Square tests of independence.
+```{r}
+#FOR MENTALLY ILL PATIENTS
+mental=filter(encounter_diagnosis_patients,EverDiagnosed==1)
+analysis_df1 <- mental %>%
+  mutate(
+    Is_FollowUp = if_else(VisitType == "FOLLOW UP", 1, 0),
+        Simple_Status = if_else(MyChartStatus == "Activated", "Active", "Not Active")
+  ) %>%
+  filter(!is.na(Simple_Status), !is.na(VisitType))
 
+# 1. Create a contingency table
+contingency_table1 <- table(analysis_df1$Simple_Status, analysis_df1$Is_FollowUp)
+print(contingency_table1)
+
+# 2. Run the Chi-Squared Test
+chi_test1 <- chisq.test(contingency_table1)
+print(chi_test1)
+
+followup_comparison1 <- analysis_df1 %>%
+  group_by(Simple_Status) %>%
+  summarize(
+    Total_Encounters = n(),
+    FollowUp_Count = sum(Is_FollowUp),
+    FollowUp_Rate = (FollowUp_Count / Total_Encounters) * 100
+  )
+
+print(followup_comparison1)
+
+ggplot(followup_comparison1, aes(x = Simple_Status, y = FollowUp_Rate, fill = Simple_Status)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = paste0(round(FollowUp_Rate, 1), "%")), vjust = -0.5) +
+  labs(
+    y = "Follow-up Rate (%)",
+    x = "MyChart Status"
+  ) +
+  theme_minimal() +
+  guides(fill = "none")
+
+
+#FOR NON MENTALLY ILL PATIENTS
+nonmental=filter(encounter_diagnosis_patients,EverDiagnosed==0)
+analysis_df2 <- nonmental %>%
+  mutate(
+    Is_FollowUp = if_else(VisitType == "FOLLOW UP", 1, 0),
+    
+    # Simplify MyChart status into two main groups
+    Simple_Status = if_else(MyChartStatus == "Activated", "Active", "Not Active")
+  ) %>%
+  # Remove NAs to keep the statistical test clean
+  filter(!is.na(Simple_Status), !is.na(VisitType))
+
+# 1. Create a contingency table
+contingency_table2 <- table(analysis_df2$Simple_Status, analysis_df2$Is_FollowUp)
+print(contingency_table2)
+
+# 2. Run the Chi-Squared Test
+chi_test2 <- chisq.test(contingency_table2)
+print(chi_test2)
+
+followup_comparison2 <- analysis_df2 %>%
+  group_by(Simple_Status) %>%
+  summarize(
+    Total_Encounters = n(),
+    FollowUp_Count = sum(Is_FollowUp),
+    FollowUp_Rate = (FollowUp_Count / Total_Encounters) * 100
+  )
 ```
 
-Creates a histogram describing hospitalizations, grouped by patients who have ever received a mental illness diagnosis versus those who haven't.
+Measures if follow up visits and mychart activation status are related. Strong relationship found with chi squared hypothesis testing.
 
+```{r}
+my_combined <- bind_rows(
+  followup_comparison1 %>% mutate(Group = "Mental Illness"),
+  followup_comparison2 %>% mutate(Group = "No Mental Illness")
+)
+
+ggplot(my_combined, aes(x = Simple_Status, y = FollowUp_Rate, fill = Group)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) + 
+  geom_text(aes(label = sprintf("%.1f%%", FollowUp_Rate)), 
+            position = position_dodge(width = 0.8), 
+            vjust = -0.5, 
+            fontface = "bold", 
+            size = 4) +
+  scale_fill_manual(values = c("Mental Illness" = "cornflowerblue", "No Mental Illness" = "darkred")) +
+  labs(
+    title = "Follow-up Rates by MyChart Status & Mental Health Diagnosis",    y = "Follow-up Rate (%)",
+    x = "MyChart Status",
+    fill = "Patient Group"
+  ) +
+  ylim(0, 25) + 
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    axis.title = element_text(face = "bold", size = 12),
+    axis.text = element_text(face = "bold", color = "black", size = 11),
+    legend.position = "top",
+    legend.title = element_text(face = "bold"),
+    panel.grid.major.x = element_blank() # Clean up vertical lines
+  )
+```
+
+Chi-square test for MyChart inactivation by reported race, including odds ratio computations.
+
+```{r}
+# 1. Get the most recent status for each unique patient
+patient_mychart_status <- encounter_diagnosis_patients %>%
+  group_by(PatientDurableKey) %>%
+  slice_max(Date, n = 1, with_ties = FALSE) %>% 
+  ungroup()
+
+# 2. Calculate the Inactivation Rate by Race
+# 1. Summarize Non-Mental Health Group
+inactivation_stats1 <- nonmental %>%
+  group_by(FirstRace) %>%
+  summarize(
+    Total_Patients = n(),
+    Inactivated_Count = sum(MyChartStatus != "Activated", na.rm = TRUE),
+    Inactivation_Rate = (Inactivated_Count / Total_Patients) * 100,
+    Illness = "No Mental Illness"
+  )
+
+# 2. Summarize Mental Health Group
+inactivation_stats2 <- mental %>%
+  group_by(FirstRace) %>%
+  summarize(
+    Total_Patients = n(),
+    Inactivated_Count = sum(MyChartStatus != "Activated", na.rm = TRUE),
+    Inactivation_Rate = (Inactivated_Count / Total_Patients) * 100,
+    Illness = "Mental Illness"
+  )
+
+# 3. Combine into one master dataset
+inactivation_stats <- bind_rows(inactivation_stats1, inactivation_stats2) %>%
+  arrange(Illness, desc(Inactivation_Rate))
+inactivation_stats=inactivation_stats%>%slice(-c(11,20,7,10,17,18))
+
+# 4. Prepare the data for the Chi-square test
+chisq_prep <- inactivation_stats %>%
+  group_by(FirstRace) %>%
+  summarize(
+    Inactivated = sum(Inactivated_Count),
+    Activated = sum(Total_Patients) - sum(Inactivated_Count)
+  )
+
+# 5. Create a Contingency Table
+contingency_table <- as.matrix(chisq_prep[, c("Inactivated", "Activated")])
+rownames(contingency_table) <- chisq_prep$FirstRace
+
+# 6. Perform the Chi-Square Test
+chisq_result <- chisq.test(contingency_table)
+
+# 7. View Results
+print(chisq_result)
+
+# 8. Odds Ratios (Minority vs White)
+binary_data <- chisq_prep %>%
+  mutate(Group = if_else(FirstRace == "White or Caucasian", "White or Caucasian", "Minority")) %>%
+  group_by(Group) %>%
+  summarize(
+    Inactivated = sum(Inactivated),
+    Activated = sum(Activated)
+  )
+
+binary_table <- as.matrix(binary_data[, c("Inactivated", "Activated")])
+rownames(binary_table) <- binary_data$Group
+
+or_test <- (binary_table["Minority", "Inactivated"] / binary_table["Minority", "Activated"]) /
+           (binary_table["White or Caucasian", "Inactivated"] / binary_table["White or Caucasian", "Activated"])
+
+cat("Odds Ratio (Minority vs White Inactivity):", or_test, "\n")
+```
+
+Creates a bar graph showing the disparities between myChart activation and race.
+
+```{r}
+ggplot(inactivation_stats, aes(x = reorder(FirstRace, Inactivation_Rate), y = Inactivation_Rate,group=Illness,fill=Illness)) + scale_fill_manual(values=c("Mental Illness"="cornflowerblue","No Mental Illness"="darkred")) +
+  geom_col(position="dodge") +
+  coord_flip() +
+  labs( title = "MyChart Inactivation Percentages By Reported Race",
+        x = "Reported Race",
+        y = "Prevalence (% of all patients)") +
+  theme_minimal() + 
+  theme(
+    axis.title = element_text(face = "bold", size = 12),
+    plot.title=element_text(face="bold",size=15,hjust=0.5),
+    axis.text = element_text(face = "bold", color = "black", size = 12),legend.position = "top"
+  ) + ylim(0,45)
+```
+
+Creates a bar graph showing the disparities between myChart activation and race.
+
+```{r}
+  ggplot(inactivation_stats, aes(x = reorder(FirstRace, Inactivation_Rate), y = Inactivation_Rate,group=Illness,fill=Illness)) + scale_fill_manual(values=c("Mental Illness"="cornflowerblue","No Mental Illness"="darkred")) +
+  geom_col(position="dodge") +
+  coord_flip() +
+  labs( title = "MyChart Inactivation Percentages By Reported Race",
+        x = "Reported Race",
+        y = "Prevalence (% of all patients)") +
+  theme_minimal() + 
+  theme(
+    axis.title = element_text(face = "bold", size = 12),
+    plot.title=element_text(face="bold",size=15,hjust=0.5),
+    axis.text = element_text(face = "bold", color = "black", size = 12),legend.position = "top"
+  ) + ylim(0,45)
+```
+
+Creates a plot showing top diagnosed illnesses and myChart inactivity. Found strong relationship between mental illness (6/10 top cases) and inactivity.
+```{r}
+disease_inactivation_analysis <- encounter_diagnosis_patients %>%
+  filter(!is.na(DiagnosisName)) %>%
+  group_by(DiagnosisName) %>%
+  summarize(
+    Total_Patients = n_distinct(PatientDurableKey),
+    Inactivated_Patients = n_distinct(PatientDurableKey[activated_flag==0]),
+    Inactivation_Rate = (Inactivated_Patients / Total_Patients) * 100
+  ) %>%
+  filter(Total_Patients > 500) %>% 
+  arrange(desc(Inactivation_Rate)) %>%
+  slice_head(n = 10) 
+disease_inactivation_analysis <- disease_inactivation_analysis %>%
+  mutate(DiagnosisName=c("Disruptive mood dysregulation disorder 
+","Major depressive disorder with psychotic symptoms
+","Examination for participation in sport
+","Suicidal ideations
+","Respiratory tuberculosis screening
+","Major depressive disorder without psychotic features
+","Short stature (children)
+","Encounter for pre-employment examination
+","Altered mental status, unspecified
+","Major depressive disorder (single episode)
+"))
+plot <- ggplot(disease_inactivation_analysis, aes(x = reorder(DiagnosisName, Inactivation_Rate), y = Inactivation_Rate)) +
+  geom_col(fill = "#d95f02", width = 0.7) + 
+  coord_flip() +
+    geom_text(aes(label = paste0(round(Inactivation_Rate, 1), "%")), 
+            hjust = -0.2, 
+            size = 3) +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 25)) + 
+    scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Top 10 Diagnoses by MyChart Inactivation",
+    x = NULL, # Remove "Diagnosis" label to save space
+    y = "Inactivation Rate (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 8, lineheight = 0.8), # Small text with tight line spacing
+    axis.text.x = element_text(size = 8),
+    plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+    panel.grid.major.y = element_blank(), # Remove horizontal lines for a cleaner look
+    plot.margin = margin(10, 20, 10, 10) # Add extra space on the right for the % labels
+  )
+ggsave("readable_inactivation_plot.png", plot, width = 6, height = 8, dpi = 300)
+```
+
+---------------------------------------------------------------------------------------------------
+# EXPLORATORY & SUPPLEMENTARY ANALYSES
+
+Creates a histogram describing all the hospitalizations, divided by patients who have ever recieved a mental illness diagnosis, and patients who haven't
 ```{r}
 no_mental=filter(encounter_diagnosis_patients,encounter_diagnosis_patients$EverDiagnosed==0)
 yes_mental=filter(encounter_diagnosis_patients,encounter_diagnosis_patients$EverDiagnosed==1)
@@ -106,6 +360,20 @@ Creates a line graph displaying repeat hospitalizations in patients diagnosed wi
 #        y = "Number of Patients")
 ```
 
+Just played around with the dataset but didn't find much. *No significant results.*
+```{r}
+# addiction = filter(encounter_diagnosis_patients,
+#                    GroupCode==   ("ICD-10-CM: F", 10:19))
+# addiction_hospital <- addiction %>%
+#   filter(AdmissionType == "Emergency") %>%
+#   arrange(PatientDurableKey)
+# addiction_key <- addiction_hospital %>%
+#   count(PatientDurableKey, name = "Frequency")
+# 
+# addiction_hospital_final <- addiction %>%
+#   inner_join(addiction_key, by = "PatientDurableKey")
+```
+
 Creates a graph displaying distribution of all races in dataset. *No use as of yet*
 
 ```{r}
@@ -129,4 +397,198 @@ Creates a graph displaying distribution of all races in dataset. *No use as of y
 
 ```
 
+Follow up and mychart activity sample plots. *No use as of yet.*
+```{r}
+#FOR MENTALLY ILL PATIENTS
+mental=filter(encounter_diagnosis_patients,EverDiagnosed==1)
+analysis_df1 <- mental %>%
+  mutate(
+    Is_FollowUp = if_else(VisitType == "FOLLOW UP", 1, 0),
+        Simple_Status = if_else(MyChartStatus == "Activated", "Active", "Not Active")
+  ) %>%
+  filter(!is.na(Simple_Status), !is.na(VisitType))
 
+# 1. Create a contingency table
+contingency_table1 <- table(analysis_df1$Simple_Status, analysis_df1$Is_FollowUp)
+print(contingency_table1)
+
+# 2. Run the Chi-Squared Test
+chi_test1 <- chisq.test(contingency_table1)
+print(chi_test1)
+
+followup_comparison1 <- analysis_df1 %>%
+  group_by(Simple_Status) %>%
+  summarize(
+    Total_Encounters = n(),
+    FollowUp_Count = sum(Is_FollowUp),
+    FollowUp_Rate = (FollowUp_Count / Total_Encounters) * 100
+  )
+
+print(followup_comparison1)
+
+ggplot(followup_comparison1, aes(x = Simple_Status, y = FollowUp_Rate, fill = Simple_Status)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = paste0(round(FollowUp_Rate, 1), "%")), vjust = -0.5) +
+  labs(
+    y = "Follow-up Rate (%)",
+    x = "MyChart Status"
+  ) +
+  theme_minimal() +
+  guides(fill = "none")
+
+
+#FOR NON MENTALLY ILL PATIENTS
+nonmental=filter(encounter_diagnosis_patients,EverDiagnosed==0)
+analysis_df2 <- nonmental %>%
+  mutate(
+    Is_FollowUp = if_else(VisitType == "FOLLOW UP", 1, 0),
+    
+    # Simplify MyChart status into two main groups
+    Simple_Status = if_else(MyChartStatus == "Activated", "Active", "Not Active")
+  ) %>%
+  # Remove NAs to keep the statistical test clean
+  filter(!is.na(Simple_Status), !is.na(VisitType))
+# 1. Create a contingency table
+contingency_table2 <- table(analysis_df2$Simple_Status, analysis_df2$Is_FollowUp)
+print(contingency_table2)
+
+# 2. Run the Chi-Squared Test
+chi_test2 <- chisq.test(contingency_table2)
+print(chi_test2)
+
+followup_comparison2 <- analysis_df2 %>%
+  group_by(Simple_Status) %>%
+  summarize(
+    Total_Encounters = n(),
+    FollowUp_Count = sum(Is_FollowUp),
+    FollowUp_Rate = (FollowUp_Count / Total_Encounters) * 100
+  )
+
+#FOR BOTH BUT WITH NO DIVISION. NOTE; NO USE AS OF YET
+# print(followup_comparison2)
+# analysis_df1 <- encounter_diagnosis_patients %>%
+#   mutate(
+#     Is_FollowUp = if_else(VisitType == "FOLLOW UP", 1, 0),
+#         Simple_Status = if_else(MyChartStatus == "Activated", "Active", "Not Active")
+#   ) %>%
+#   filter(!is.na(Simple_Status), !is.na(VisitType))
+# 
+# # 1. Create a contingency table
+# contingency_table <- table(analysis_df$Simple_Status, analysis_df$Is_FollowUp)
+# print(contingency_table)
+# 
+# # 2. Run the Chi-Squared Test
+# chi_test <- chisq.test(contingency_table)
+# print(chi_test)
+# 
+# followup_comparison <- analysis_df %>%
+#   group_by(Simple_Status) %>%
+#   summarize(
+#     Total_Encounters = n(),
+#     FollowUp_Count = sum(Is_FollowUp),
+#     FollowUp_Rate = (FollowUp_Count / Total_Encounters) * 100
+#   )
+# 
+# print(followup_comparison)
+# 
+# ggplot(followup_comparison, aes(x = Simple_Status, y = FollowUp_Rate, fill = Simple_Status)) +
+#   geom_col(width = 0.6) +
+#   geom_text(aes(label = paste0(round(FollowUp_Rate, 1), "%")), vjust = -0.5) +
+#   labs(
+#     title = "Follow-up Rate: Active vs. Not Active MyChart Users",
+#     y = "Follow-up Rate (%)",
+#     x = "MyChart Status"
+#   ) +
+#   guides(fill = "none") 
+```
+
+Looks for relationship between relationship status and myChart activation status. Strong relationship found but not used in analysis. *No use as of yet.*
+```{r}
+marital_analysis <- encounter_diagnosis_patients %>%
+  mutate(MaritalStatus_Clean = case_when(
+    MaritalStatus == "Single" ~ "Single",
+    MaritalStatus == "Married" ~ "Married",
+    MaritalStatus == "Widowed" ~ "Widowed",
+    MaritalStatus %in% c("Divorced", "Legally Separated") ~ "Divorced",
+    MaritalStatus %in% c("Significant Other", "Life Partner") ~ "Significant Other",
+    TRUE ~ NA_character_ 
+  )) %>%
+  filter(!is.na(MaritalStatus_Clean))
+
+# 2. Calculate Activation Rates
+marital_stats <- marital_analysis %>%
+  group_by(MaritalStatus_Clean) %>%
+  summarize(
+    Total_Patients = n_distinct(PatientDurableKey),
+    Activated_Count = sum(activated_flag == 1, na.rm = TRUE),
+    Activation_Rate = (Activated_Count / Total_Patients)
+  ) %>%
+  arrange(desc(Activation_Rate))
+
+print(marital_stats)
+
+marital_table <- table(marital_analysis$MaritalStatus_Clean, marital_analysis$activated_flag)
+marital_proportions <- prop.table(marital_table, margin = 1)
+print(marital_table)
+marital_chisq <- chisq.test(marital_table)
+print(marital_chisq)
+ggplot(marital_stats, aes(x = reorder(MaritalStatus_Clean, Activation_Rate), y = Activation_Rate, fill = MaritalStatus_Clean)) +
+  geom_col() +
+  coord_flip() +
+  geom_text(aes(label = paste0(round(Activation_Rate, 1), "%")), hjust = -0.1) +
+  labs(
+    title = "MyChart Activation by Marital Status",
+    subtitle = "Testing the Social Support Hypothesis",
+    x = "Marital Category",
+    y = "Activation Rate (%)"
+  )
+```
+
+Creates a plot showing top diagnosed illnesses and myChart inactivity. Found strong relationship between mental illness (6/10 top cases) and inactivity.
+```{r}
+disease_inactivation_analysis <- encounter_diagnosis_patients %>%
+  filter(!is.na(DiagnosisName)) %>%
+  group_by(DiagnosisName) %>%
+  summarize(
+    Total_Patients = n_distinct(PatientDurableKey),
+    Inactivated_Patients = n_distinct(PatientDurableKey[activated_flag==0]),
+    Inactivation_Rate = (Inactivated_Patients / Total_Patients) * 100
+  ) %>%
+  filter(Total_Patients > 500) %>% 
+  arrange(desc(Inactivation_Rate)) %>%
+  slice_head(n = 10) 
+disease_inactivation_analysis <- disease_inactivation_analysis %>%
+  mutate(DiagnosisName=c("Disruptive mood dysregulation disorder 
+","Major depressive disorder with psychotic symptoms
+","Examination for participation in sport
+","Suicidal ideations
+","Respiratory tuberculosis screening
+","Major depressive disorder without psychotic features
+","Short stature (children)
+","Encounter for pre-employment examination
+","Altered mental status, unspecified
+","Major depressive disorder (single episode)
+"))
+plot <- ggplot(disease_inactivation_analysis, aes(x = reorder(DiagnosisName, Inactivation_Rate), y = Inactivation_Rate)) +
+  geom_col(fill = "#d95f02", width = 0.7) + 
+  coord_flip() +
+    geom_text(aes(label = paste0(round(Inactivation_Rate, 1), "%")), 
+            hjust = -0.2, 
+            size = 3) +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 25)) + 
+    scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Top 10 Diagnoses by MyChart Inactivation",
+    x = NULL, # Remove "Diagnosis" label to save space
+    y = "Inactivation Rate (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 8, lineheight = 0.8), # Small text with tight line spacing
+    axis.text.x = element_text(size = 8),
+    plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+    panel.grid.major.y = element_blank(), # Remove horizontal lines for a cleaner look
+    plot.margin = margin(10, 20, 10, 10) # Add extra space on the right for the % labels
+  )
+ggsave("readable_inactivation_plot.png", plot, width = 6, height = 8, dpi = 300)
+```
