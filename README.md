@@ -5,10 +5,10 @@ The project evaluates a large-scale healthcare dataset to understand patient jou
 
 ## Project Overview
 
-Healthcare outcome metrics and portal usage vary significantly across patient demographics. Using R and tidyverse tools, this analysis explores:
--Mental health identification: Flagging diagnostic patterns to identify patient groups with mental health diagnoses.
--Portal activation disparities: Finding MyChart portal inactivation rates across reported racial groups and diagnostic categories.
--Follow-up compliance: Performing chi-square independence testing to evaluate how digital portal activation impacts follow-up appointment completion.
+Healthcare outcome metrics and portal usage vary significantly across patient demographics. Using R and tidyverse tools, this analysis explores:\
+-Mental health identification: Flagging diagnostic patterns to identify patient groups with mental health diagnoses.\
+-Portal activation disparities: Finding MyChart portal inactivation rates across reported racial groups and diagnostic categories.\
+-Follow-up compliance: Performing chi-square independence testing to evaluate how digital portal activation impacts follow-up appointment completion.\
 -Healthcare utilization: Quantifying differences in total encounter counts between patient groups.
 
 ## Data & Repository Notes
