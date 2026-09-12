@@ -12,8 +12,8 @@ Healthcare outcome metrics and portal usage vary significantly across patient de
 -Healthcare utilization: Quantifying differences in total encounter counts between patient groups.
 
 ## Data & Repository Notes
-The dataset used for this project is proprietary and subject to regulations, therefore, data files are excluded from this repository.
-This repository contains preliminary statistical exploratory code and draft visualizations alongside the core scripts used for the final presentation.
+The dataset used for this project is proprietary and subject to regulations, therefore, the dataset is excluded from this repository.
+This repository contains preliminary statistical exploratory code and draft visualizations alongside the scripts used for the final presentation.
 
 ## Packages used
 
